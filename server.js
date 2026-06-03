@@ -14,7 +14,7 @@ const sessions = {}
 
 app.post('/api/session', async (req, res) => {
   try {
-    const { userAgent, width, height, dpr, touch, url } = req.body
+    const { url } = req.body
 
     const browser = await chromium.launch({
       headless: true,
@@ -27,15 +27,15 @@ app.post('/api/session', async (req, res) => {
     })
 
     const context = await browser.newContext({
-      userAgent: userAgent || 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-      viewport: { width: width || 390, height: height || 844 },
-      deviceScaleFactor: dpr || 3,
+      userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 1,
       isMobile: true,
       hasTouch: true
     })
 
     const page = await context.newPage()
-    await page.goto(url || 'https://google.com')
+    await page.goto(url || 'https://accounts.google.com')
 
     const sessionId = Date.now().toString()
     sessions[sessionId] = { browser, page, context }
@@ -111,7 +111,7 @@ async function startStreaming(socket, sessionId) {
     try {
       const screenshot = await page.screenshot({
         type: 'jpeg',
-        quality: 70
+        quality: 95
       })
       socket.emit('frame', screenshot.toString('base64'))
       socket.emit('url', page.url())
