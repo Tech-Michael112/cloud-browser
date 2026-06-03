@@ -20,89 +20,41 @@
       display: flex;
       gap: 6px;
       align-items: center;
-      flex-shrink: 0;
       height: 44px;
+      flex-shrink: 0;
     }
     #urlbar {
-      flex: 1;
-      padding: 5px 10px;
-      border-radius: 20px;
-      border: none;
-      background: #333;
-      color: white;
-      font-size: 13px;
-      height: 32px;
+      flex: 1; padding: 5px 10px;
+      border-radius: 20px; border: none;
+      background: #333; color: white; font-size: 13px;
     }
     #goBtn {
-      padding: 5px 14px;
-      border-radius: 20px;
-      background: #4CAF50;
-      color: white;
-      border: none;
-      cursor: pointer;
-      font-size: 13px;
-      height: 32px;
-      white-space: nowrap;
+      padding: 5px 14px; border-radius: 20px;
+      background: #4CAF50; color: white;
+      border: none; font-size: 13px;
     }
     #status {
-      color: #666;
-      font-size: 10px;
-      padding: 2px 8px;
-      font-family: monospace;
-      text-align: center;
-      flex-shrink: 0;
-      background: #000;
-      height: 18px;
+      color: #aaa; font-size: 11px;
+      text-align: center; padding: 2px;
+      background: #111; flex-shrink: 0;
     }
     #wrapper {
-      flex: 1;
-      overflow: hidden;
-      position: relative;
-      width: 100%;
+      flex: 1; position: relative;
+      overflow: hidden; width: 100%;
     }
     #screen {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: fill;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       touch-action: none;
-      cursor: pointer;
     }
-    #keyboard {
+    #hiddenInput {
       position: fixed;
-      bottom: -80px;
-      left: 0;
-      width: 100%;
-      background: #1a1a1a;
-      padding: 8px;
-      display: flex;
-      gap: 6px;
-      z-index: 999;
-      transition: bottom 0.25s ease;
-      flex-shrink: 0;
-    }
-    #keyboard.show { bottom: 0; }
-    #keyinput {
-      flex: 1;
-      padding: 10px;
-      border-radius: 8px;
-      border: none;
-      background: #333;
-      color: white;
+      left: -9999px;
+      top: 50%;
       font-size: 16px;
+      opacity: 0;
     }
-    .kbtn {
-      padding: 10px 14px;
-      border-radius: 8px;
-      color: white;
-      border: none;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    #keysend { background: #4CAF50; }
-    #keyclose { background: #e53935; }
   </style>
 </head>
 <body>
@@ -114,30 +66,19 @@
   <div id="wrapper">
     <canvas id="screen"></canvas>
   </div>
-  <div id="keyboard">
-    <input id="keyinput" type="text" placeholder="Type here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-    <button class="kbtn" id="keysend">Send</button>
-    <button class="kbtn" id="keyclose">✕</button>
-  </div>
+  <input id="hiddenInput" type="text" autocomplete="off" />
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const canvas = document.getElementById('screen')
     const ctx = canvas.getContext('2d')
-    const urlbar = document.getElementById('urlbar')
     const status = document.getElementById('status')
-    const keyboard = document.getElementById('keyboard')
-    const keyinput = document.getElementById('keyinput')
-    const wrapper = document.getElementById('wrapper')
+    const urlbar = document.getElementById('urlbar')
+    const hiddenInput = document.getElementById('hiddenInput')
     const socket = io()
-
     let sessionId = null
 
-    // Get real device dimensions
-    const deviceWidth = window.screen.width
-    const deviceHeight = window.screen.height
-    const deviceUA = navigator.userAgent
-
+    // Start session
     async function startSession(url) {
       status.textContent = 'Starting...'
       try {
@@ -146,30 +87,27 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: url || 'https://accounts.google.com',
-            userAgent: deviceUA,
-            width: deviceWidth,
-            height: deviceHeight
+            userAgent: navigator.userAgent,
+            width: window.screen.width,
+            height: window.screen.height
           })
         })
         const data = await res.json()
         if (data.error) { status.textContent = 'Error: ' + data.error; return }
         sessionId = data.sessionId
-        status.textContent = 'Live'
+        status.textContent = 'Live ✓'
         socket.emit('join', sessionId)
       } catch (err) {
         status.textContent = 'Failed: ' + err.message
       }
     }
 
-    // Draw frame filling the wrapper div
+    // Render frames
     socket.on('frame', (base64) => {
       const img = new Image()
       img.onload = () => {
-        // Set canvas internal resolution to image size
-        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-          canvas.width = img.naturalWidth
-          canvas.height = img.naturalHeight
-        }
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
         ctx.drawImage(img, 0, 0)
       }
       img.src = 'data:image/jpeg;base64,' + base64
@@ -178,87 +116,100 @@
     socket.on('url', (url) => { urlbar.value = url })
     socket.on('error', (msg) => { status.textContent = 'Error: ' + msg })
 
-    // Convert screen coords to canvas coords
-    function scale(clientX, clientY) {
+    // Convert coordinates
+    function toCanvasCoords(clientX, clientY) {
       const rect = canvas.getBoundingClientRect()
-      return {
-        x: (clientX - rect.left) * (canvas.width / rect.width),
-        y: (clientY - rect.top) * (canvas.height / rect.height)
-      }
+      const x = (clientX - rect.left) / rect.width * canvas.width
+      const y = (clientY - rect.top) / rect.height * canvas.height
+      return { x, y }
     }
 
-    // Touch handling
-    let t0x, t0y, t0time, lastTY
+    // Touch events
+    let touchStartX = 0
+    let touchStartY = 0
+    let touchStartTime = 0
+    let lastScrollY = 0
+    let didScroll = false
 
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
-      t0x = e.touches[0].clientX
-      t0y = e.touches[0].clientY
-      lastTY = t0y
-      t0time = Date.now()
+      const t = e.touches[0]
+      touchStartX = t.clientX
+      touchStartY = t.clientY
+      lastScrollY = t.clientY
+      touchStartTime = Date.now()
+      didScroll = false
     }, { passive: false })
 
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault()
-      const dy = lastTY - e.touches[0].clientY
-      lastTY = e.touches[0].clientY
-      socket.emit('input', { type: 'scroll', delta: dy * 3 })
+      didScroll = true
+      const t = e.touches[0]
+      const delta = (lastScrollY - t.clientY) * 2
+      lastScrollY = t.clientY
+      socket.emit('input', { type: 'scroll', delta })
     }, { passive: false })
 
     canvas.addEventListener('touchend', (e) => {
       e.preventDefault()
-      const dx = Math.abs(e.changedTouches[0].clientX - t0x)
-      const dy = Math.abs(e.changedTouches[0].clientY - t0y)
-      const dt = Date.now() - t0time
+      if (didScroll) return
 
-      if (dt < 250 && dx < 15 && dy < 15) {
-        const { x, y } = scale(t0x, t0y)
+      const t = e.changedTouches[0]
+      const dx = Math.abs(t.clientX - touchStartX)
+      const dy = Math.abs(t.clientY - touchStartY)
+      const dt = Date.now() - touchStartTime
+
+      if (dt < 300 && dx < 20 && dy < 20) {
+        const { x, y } = toCanvasCoords(touchStartX, touchStartY)
         socket.emit('input', { type: 'tap', x, y })
-        setTimeout(() => {
-          keyboard.classList.add('show')
-          keyinput.focus()
-        }, 350)
+        status.textContent = `Tap: ${Math.round(x)}, ${Math.round(y)}`
+
+        // Focus hidden input for keyboard
+        setTimeout(() => hiddenInput.focus(), 100)
       }
     }, { passive: false })
 
-    // Desktop
-    canvas.addEventListener('click', (e) => {
-      if (navigator.maxTouchPoints > 0) return
-      const { x, y } = scale(e.clientX, e.clientY)
-      socket.emit('input', { type: 'tap', x, y })
+    // Hidden input for keyboard
+    let lastVal = ''
+    hiddenInput.addEventListener('input', () => {
+      const val = hiddenInput.value
+      if (val.length > lastVal.length) {
+        const newChar = val.slice(lastVal.length)
+        socket.emit('input', { type: 'type', text: newChar })
+      }
+      lastVal = val
     })
 
-    canvas.addEventListener('wheel', (e) => {
-      socket.emit('input', { type: 'scroll', delta: e.deltaY })
+    hiddenInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        socket.emit('input', { type: 'key', key: 'Backspace' })
+        lastVal = hiddenInput.value.slice(0, -1)
+      }
+      if (e.key === 'Enter') {
+        socket.emit('input', { type: 'key', key: 'Enter' })
+        hiddenInput.value = ''
+        lastVal = ''
+      }
     })
 
+    // Desktop keyboard
     document.addEventListener('keydown', (e) => {
-      if (e.target === keyinput || e.target === urlbar) return
+      if (e.target === urlbar || e.target === hiddenInput) return
       if (e.key.length === 1) socket.emit('input', { type: 'type', text: e.key })
       else socket.emit('input', { type: 'key', key: e.key })
     })
 
-    // Keyboard overlay
-    document.getElementById('keysend').addEventListener('click', () => {
-      if (keyinput.value) {
-        socket.emit('input', { type: 'type', text: keyinput.value })
-        keyinput.value = ''
-      }
-      keyboard.classList.remove('show')
+    // Desktop click
+    canvas.addEventListener('click', (e) => {
+      if (navigator.maxTouchPoints > 0) return
+      const { x, y } = toCanvasCoords(e.clientX, e.clientY)
+      socket.emit('input', { type: 'tap', x, y })
     })
 
-    document.getElementById('keyclose').addEventListener('click', () => {
-      keyboard.classList.remove('show')
-    })
-
-    keyinput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        if (keyinput.value) socket.emit('input', { type: 'type', text: keyinput.value })
-        socket.emit('input', { type: 'key', key: 'Enter' })
-        keyinput.value = ''
-        keyboard.classList.remove('show')
-      }
-    })
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      socket.emit('input', { type: 'scroll', delta: e.deltaY })
+    }, { passive: false })
 
     // Go button
     document.getElementById('goBtn').addEventListener('click', () => {
