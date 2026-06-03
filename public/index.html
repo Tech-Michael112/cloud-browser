@@ -37,7 +37,7 @@
 </head>
 <body>
   <div id="toolbar">
-    <input id="urlbar" type="text" value="https://google.com" />
+    <input id="urlbar" type="text" value="https://accounts.google.com" />
     <button id="goBtn">Go</button>
   </div>
   <div id="status">Starting...</div>
@@ -62,12 +62,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userAgent: navigator.userAgent,
-            width: 390,
-            height: 844,
-            dpr: window.devicePixelRatio || 3,
-            touch: navigator.maxTouchPoints > 0,
-            url: url || 'https://google.com'
+            url: url || 'https://accounts.google.com'
           })
         })
 
@@ -87,7 +82,7 @@
       }
     }
 
-    // Render frames — fix blur by using natural image size
+    // Render frames
     socket.on('frame', (base64) => {
       const img = new Image()
       img.onload = () => {
@@ -111,7 +106,7 @@
       status.textContent = 'Error: ' + msg
     })
 
-    // Click — scale coordinates to match canvas real size
+    // Click
     canvas.addEventListener('click', (e) => {
       const rect = canvas.getBoundingClientRect()
       const scaleX = canvas.width / rect.width
@@ -123,7 +118,7 @@
       })
     })
 
-    // Touch — scale coordinates
+    // Touch
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
       const rect = canvas.getBoundingClientRect()
@@ -161,8 +156,8 @@
       }
     })
 
-    // Auto start
-    startSession('https://google.com')
+    // Auto start on load
+    startSession('https://accounts.google.com')
   </script>
 </body>
 </html>
