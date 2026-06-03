@@ -18,19 +18,18 @@
       height: 100vh;
       touch-action: none;
     }
-    /* Floating URL bar - hidden by default, shows on swipe down */
     #toolbar {
       position: fixed;
       top: -60px;
       left: 0;
       width: 100%;
-      background: rgba(20,20,20,0.95);
+      background: rgba(20,20,20,0.97);
       padding: 8px;
       display: flex;
       gap: 6px;
       align-items: center;
       z-index: 999;
-      transition: top 0.3s ease;
+      transition: top 0.25s ease;
       height: 52px;
     }
     #toolbar.show { top: 0; }
@@ -51,29 +50,23 @@
     }
     #status {
       position: fixed;
-      bottom: 4px;
-      left: 0;
+      bottom: 6px; left: 0;
       width: 100%;
       text-align: center;
-      color: rgba(255,255,255,0.3);
+      color: rgba(255,255,255,0.25);
       font-size: 9px;
       z-index: 998;
       pointer-events: none;
+      font-family: monospace;
     }
-    /* Invisible input to capture keyboard */
     #hiddenInput {
       position: fixed;
-      left: 50%;
-      top: 50%;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      font-size: 16px;
-      border: none;
-      background: transparent;
-      color: transparent;
-      caret-color: transparent;
-      transform: translate(-50%, -50%);
+      left: 50%; top: 50%;
+      width: 1px; height: 1px;
+      opacity: 0; font-size: 16px;
+      border: none; background: transparent;
+      color: transparent; caret-color: transparent;
+      transform: translate(-50%,-50%);
     }
   </style>
 </head>
@@ -81,18 +74,17 @@
   <canvas id="screen"></canvas>
 
   <div id="toolbar">
-    <input id="urlbar" type="text" value="https://accounts.google.com" />
+    <input id="urlbar" type="text" value="https://google.com" />
     <button id="goBtn">Go</button>
     <button id="closeBar">✕</button>
   </div>
 
-  <div id="status">Swipe down to show URL bar</div>
+  <div id="status">Loading...</div>
 
   <input id="hiddenInput" type="text"
     autocomplete="off" autocorrect="off"
     autocapitalize="off" spellcheck="false" />
 
-  <script src="/socket.io/socket.io.js"></script>
   <script>
     const canvas = document.getElementById('screen')
     const ctx = canvas.getContext('2d')
@@ -100,12 +92,52 @@
     const urlbar = document.getElementById('urlbar')
     const toolbar = document.getElementById('toolbar')
     const hiddenInput = document.getElementById('hiddenInput')
-    const socket = io()
 
     canvas.width = 720
     canvas.height = 1560
 
+    let ws = null
     let sessionId = null
+
+    // Connect WebSocket
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      ws = new WebSocket(`${proto}//${location.host}`)
+      ws.binaryType = 'arraybuffer'
+
+      ws.onopen = () => {
+        status.textContent = ''
+        if (sessionId) ws.send(JSON.stringify({ type: 'join', sessionId }))
+      }
+
+      ws.onmessage = (e) => {
+        // Binary = frame
+        if (e.data instanceof ArrayBuffer) {
+          const blob = new Blob([e.data], { type: 'image/jpeg' })
+          const url = URL.createObjectURL(blob)
+          const img = new Image()
+          img.onload = () => {
+            if (canvas.width !== img.naturalWidth) canvas.width = img.naturalWidth
+            if (canvas.height !== img.naturalHeight) canvas.height = img.naturalHeight
+            ctx.drawImage(img, 0, 0)
+            URL.revokeObjectURL(url)
+          }
+          img.src = url
+          return
+        }
+        // Text = JSON message
+        try {
+          const msg = JSON.parse(e.data)
+          if (msg.type === 'url') urlbar.value = msg.url
+          if (msg.type === 'error') status.textContent = 'Error: ' + msg.msg
+        } catch (e) {}
+      }
+
+      ws.onclose = () => {
+        status.textContent = 'Reconnecting...'
+        setTimeout(connectWS, 1000)
+      }
+    }
 
     async function startSession(url) {
       status.textContent = 'Starting...'
@@ -113,31 +145,16 @@
         const res = await fetch('/api/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: url || 'https://accounts.google.com' })
+          body: JSON.stringify({ url: url || 'https://google.com' })
         })
         const data = await res.json()
         if (data.error) { status.textContent = 'Error: ' + data.error; return }
         sessionId = data.sessionId
-        status.textContent = ''
-        socket.emit('join', sessionId)
+        connectWS()
       } catch (err) {
         status.textContent = 'Failed: ' + err.message
       }
     }
-
-    // Render frames
-    socket.on('frame', (base64) => {
-      const img = new Image()
-      img.onload = () => {
-        if (canvas.width !== img.naturalWidth) canvas.width = img.naturalWidth
-        if (canvas.height !== img.naturalHeight) canvas.height = img.naturalHeight
-        ctx.drawImage(img, 0, 0)
-      }
-      img.src = 'data:image/jpeg;base64,' + base64
-    })
-
-    socket.on('url', (url) => { urlbar.value = url })
-    socket.on('error', (msg) => { status.textContent = 'Error: ' + msg })
 
     function toCanvas(clientX, clientY) {
       const rect = canvas.getBoundingClientRect()
@@ -147,7 +164,13 @@
       }
     }
 
-    // Touch handling
+    function send(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj))
+      }
+    }
+
+    // Touch
     let t0x, t0y, t0time, lastTY, didScroll, swipeStartY
 
     canvas.addEventListener('touchstart', (e) => {
@@ -164,17 +187,16 @@
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault()
       const t = e.touches[0]
-      const delta = (lastTY - t.clientY) * 3
-      lastTY = t.clientY
 
-      // Detect swipe down from top to show toolbar
-      if (swipeStartY < 30 && t.clientY - swipeStartY > 40) {
+      if (swipeStartY < 40 && t.clientY - swipeStartY > 50) {
         toolbar.classList.add('show')
         return
       }
 
       didScroll = true
-      socket.emit('input', { type: 'scroll', delta })
+      const delta = (lastTY - t.clientY) * 3
+      lastTY = t.clientY
+      send({ type: 'scroll', delta })
     }, { passive: false })
 
     canvas.addEventListener('touchend', (e) => {
@@ -188,9 +210,7 @@
 
       if (dt < 300 && dx < 20 && dy < 20) {
         const { x, y } = toCanvas(t0x, t0y)
-        socket.emit('input', { type: 'tap', x, y })
-
-        // Focus hidden input to bring up keyboard
+        send({ type: 'tap', x, y })
         hiddenInput.removeAttribute('readonly')
         hiddenInput.focus()
       }
@@ -200,24 +220,23 @@
     canvas.addEventListener('click', (e) => {
       if (navigator.maxTouchPoints > 0) return
       const { x, y } = toCanvas(e.clientX, e.clientY)
-      socket.emit('input', { type: 'tap', x, y })
+      send({ type: 'tap', x, y })
       hiddenInput.focus()
     })
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault()
-      socket.emit('input', { type: 'scroll', delta: e.deltaY })
+      send({ type: 'scroll', delta: e.deltaY })
     }, { passive: false })
 
-    // Capture keyboard from hidden input
+    // Keyboard
     let lastVal = ''
     hiddenInput.addEventListener('input', () => {
       const val = hiddenInput.value
       if (val.length > lastVal.length) {
-        socket.emit('input', { type: 'type', text: val.slice(lastVal.length) })
+        send({ type: 'type', text: val.slice(lastVal.length) })
       }
       lastVal = val
-      // Keep value short to avoid issues
       if (hiddenInput.value.length > 20) {
         hiddenInput.value = ''
         lastVal = ''
@@ -226,28 +245,26 @@
 
     hiddenInput.addEventListener('keydown', (e) => {
       if (e.key === 'Backspace') {
-        socket.emit('input', { type: 'key', key: 'Backspace' })
+        send({ type: 'key', key: 'Backspace' })
         lastVal = hiddenInput.value.slice(0, -1)
       }
       if (e.key === 'Enter') {
-        socket.emit('input', { type: 'key', key: 'Enter' })
+        send({ type: 'key', key: 'Enter' })
         hiddenInput.value = ''
         lastVal = ''
       }
     })
 
-    // Desktop keyboard
     document.addEventListener('keydown', (e) => {
       if (e.target === urlbar || e.target === hiddenInput) return
-      if (e.key.length === 1) socket.emit('input', { type: 'type', text: e.key })
-      else socket.emit('input', { type: 'key', key: e.key })
+      if (e.key.length === 1) send({ type: 'type', text: e.key })
+      else send({ type: 'key', key: e.key })
     })
 
-    // Toolbar controls
+    // Toolbar
     document.getElementById('goBtn').addEventListener('click', () => {
       toolbar.classList.remove('show')
-      if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
-      else startSession(urlbar.value)
+      send({ type: 'navigate', url: urlbar.value })
     })
 
     document.getElementById('closeBar').addEventListener('click', () => {
@@ -257,11 +274,10 @@
     urlbar.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return
       toolbar.classList.remove('show')
-      if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
-      else startSession(urlbar.value)
+      send({ type: 'navigate', url: urlbar.value })
     })
 
-    startSession('https://accounts.google.com')
+    startSession('https://google.com')
   </script>
 </body>
 </html>
