@@ -37,9 +37,7 @@ app.post('/api/session', async (req, res) => {
       isMobile: true,
       hasTouch: true,
       locale: 'en-US',
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9'
-      }
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' }
     })
 
     const page = await context.newPage()
@@ -53,7 +51,7 @@ app.post('/api/session', async (req, res) => {
     await page.goto(url || 'https://accounts.google.com')
 
     const sessionId = Date.now().toString()
-    sessions[sessionId] = { browser, page, context, width: w, height: h }
+    sessions[sessionId] = { browser, page, context, width: w, height: h, active: true }
 
     res.json({ sessionId, width: w, height: h })
   } catch (err) {
@@ -81,7 +79,7 @@ io.on('connection', (socket) => {
         await page.mouse.wheel(0, data.delta)
       }
       if (data.type === 'type') {
-        await page.keyboard.type(data.text, { delay: 30 })
+        await page.keyboard.type(data.text, { delay: 0 })
       }
       if (data.type === 'key') {
         await page.keyboard.press(data.key)
@@ -97,6 +95,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', async () => {
     const session = sessions[socket.sessionId]
     if (session) {
+      session.active = false
       await session.browser.close()
       delete sessions[socket.sessionId]
     }
@@ -108,14 +107,27 @@ async function startStreaming(socket, sessionId) {
   if (!session) { socket.emit('error', 'Session not found'); return }
 
   const { page } = session
-  const streamInterval = setInterval(async () => {
-    if (!sessions[sessionId]) { clearInterval(streamInterval); return }
-    try {
-      const screenshot = await page.screenshot({ type: 'jpeg', quality: 85 })
-      socket.emit('frame', screenshot.toString('base64'))
-      socket.emit('url', page.url())
-    } catch (err) { clearInterval(streamInterval) }
-  }, 150)
+
+  const loop = async () => {
+    while (session.active && sessions[sessionId]) {
+      try {
+        const screenshot = await page.screenshot({
+          type: 'jpeg',
+          quality: 55
+        })
+        if (socket.connected) {
+          socket.volatile.emit('frame', screenshot.toString('base64'))
+          socket.volatile.emit('url', page.url())
+        } else {
+          break
+        }
+      } catch (err) {
+        break
+      }
+    }
+  }
+
+  loop()
 }
 
 const PORT = process.env.PORT || 3000
