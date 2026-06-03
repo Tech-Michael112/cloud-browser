@@ -10,63 +10,87 @@
       height: 100vh;
       background: #000;
       overflow: hidden;
-      display: flex;
-      flex-direction: column;
     }
+    #screen {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none;
+    }
+    /* Floating URL bar - hidden by default, shows on swipe down */
     #toolbar {
+      position: fixed;
+      top: -60px;
+      left: 0;
       width: 100%;
-      background: #1a1a1a;
-      padding: 6px 8px;
+      background: rgba(20,20,20,0.95);
+      padding: 8px;
       display: flex;
       gap: 6px;
       align-items: center;
-      height: 44px;
-      flex-shrink: 0;
+      z-index: 999;
+      transition: top 0.3s ease;
+      height: 52px;
     }
+    #toolbar.show { top: 0; }
     #urlbar {
-      flex: 1; padding: 5px 10px;
+      flex: 1; padding: 6px 12px;
       border-radius: 20px; border: none;
-      background: #333; color: white; font-size: 13px;
+      background: #333; color: white; font-size: 14px;
     }
     #goBtn {
-      padding: 5px 14px; border-radius: 20px;
+      padding: 6px 14px; border-radius: 20px;
       background: #4CAF50; color: white;
-      border: none; font-size: 13px;
+      border: none; font-size: 13px; cursor: pointer;
+    }
+    #closeBar {
+      padding: 6px 10px; border-radius: 20px;
+      background: #555; color: white;
+      border: none; font-size: 13px; cursor: pointer;
     }
     #status {
-      color: #aaa; font-size: 11px;
-      text-align: center; padding: 2px;
-      background: #111; flex-shrink: 0;
+      position: fixed;
+      bottom: 4px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      color: rgba(255,255,255,0.3);
+      font-size: 9px;
+      z-index: 998;
+      pointer-events: none;
     }
-    #wrapper {
-      flex: 1; position: relative;
-      overflow: hidden; width: 100%;
-    }
-    #screen {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      touch-action: none;
-    }
+    /* Invisible input to capture keyboard */
     #hiddenInput {
       position: fixed;
-      left: -9999px;
+      left: 50%;
       top: 50%;
-      font-size: 16px;
+      width: 1px;
+      height: 1px;
       opacity: 0;
+      font-size: 16px;
+      border: none;
+      background: transparent;
+      color: transparent;
+      caret-color: transparent;
+      transform: translate(-50%, -50%);
     }
   </style>
 </head>
 <body>
+  <canvas id="screen"></canvas>
+
   <div id="toolbar">
     <input id="urlbar" type="text" value="https://accounts.google.com" />
     <button id="goBtn">Go</button>
+    <button id="closeBar">✕</button>
   </div>
-  <div id="status">Starting...</div>
-  <div id="wrapper">
-    <canvas id="screen"></canvas>
-  </div>
-  <input id="hiddenInput" type="text" autocomplete="off" />
+
+  <div id="status">Swipe down to show URL bar</div>
+
+  <input id="hiddenInput" type="text"
+    autocomplete="off" autocorrect="off"
+    autocapitalize="off" spellcheck="false" />
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -74,28 +98,27 @@
     const ctx = canvas.getContext('2d')
     const status = document.getElementById('status')
     const urlbar = document.getElementById('urlbar')
+    const toolbar = document.getElementById('toolbar')
     const hiddenInput = document.getElementById('hiddenInput')
     const socket = io()
+
+    canvas.width = 720
+    canvas.height = 1560
+
     let sessionId = null
 
-    // Start session
     async function startSession(url) {
       status.textContent = 'Starting...'
       try {
         const res = await fetch('/api/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: url || 'https://accounts.google.com',
-            userAgent: navigator.userAgent,
-            width: window.screen.width,
-            height: window.screen.height
-          })
+          body: JSON.stringify({ url: url || 'https://accounts.google.com' })
         })
         const data = await res.json()
         if (data.error) { status.textContent = 'Error: ' + data.error; return }
         sessionId = data.sessionId
-        status.textContent = 'Live ✓'
+        status.textContent = ''
         socket.emit('join', sessionId)
       } catch (err) {
         status.textContent = 'Failed: ' + err.message
@@ -106,8 +129,8 @@
     socket.on('frame', (base64) => {
       const img = new Image()
       img.onload = () => {
-        canvas.width = img.naturalWidth
-        canvas.height = img.naturalHeight
+        if (canvas.width !== img.naturalWidth) canvas.width = img.naturalWidth
+        if (canvas.height !== img.naturalHeight) canvas.height = img.naturalHeight
         ctx.drawImage(img, 0, 0)
       }
       img.src = 'data:image/jpeg;base64,' + base64
@@ -116,37 +139,41 @@
     socket.on('url', (url) => { urlbar.value = url })
     socket.on('error', (msg) => { status.textContent = 'Error: ' + msg })
 
-    // Convert coordinates
-    function toCanvasCoords(clientX, clientY) {
+    function toCanvas(clientX, clientY) {
       const rect = canvas.getBoundingClientRect()
-      const x = (clientX - rect.left) / rect.width * canvas.width
-      const y = (clientY - rect.top) / rect.height * canvas.height
-      return { x, y }
+      return {
+        x: (clientX - rect.left) / rect.width * canvas.width,
+        y: (clientY - rect.top) / rect.height * canvas.height
+      }
     }
 
-    // Touch events
-    let touchStartX = 0
-    let touchStartY = 0
-    let touchStartTime = 0
-    let lastScrollY = 0
-    let didScroll = false
+    // Touch handling
+    let t0x, t0y, t0time, lastTY, didScroll, swipeStartY
 
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
       const t = e.touches[0]
-      touchStartX = t.clientX
-      touchStartY = t.clientY
-      lastScrollY = t.clientY
-      touchStartTime = Date.now()
+      t0x = t.clientX
+      t0y = t.clientY
+      lastTY = t.clientY
+      swipeStartY = t.clientY
+      t0time = Date.now()
       didScroll = false
     }, { passive: false })
 
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault()
-      didScroll = true
       const t = e.touches[0]
-      const delta = (lastScrollY - t.clientY) * 2
-      lastScrollY = t.clientY
+      const delta = (lastTY - t.clientY) * 3
+      lastTY = t.clientY
+
+      // Detect swipe down from top to show toolbar
+      if (swipeStartY < 30 && t.clientY - swipeStartY > 40) {
+        toolbar.classList.add('show')
+        return
+      }
+
+      didScroll = true
       socket.emit('input', { type: 'scroll', delta })
     }, { passive: false })
 
@@ -155,29 +182,46 @@
       if (didScroll) return
 
       const t = e.changedTouches[0]
-      const dx = Math.abs(t.clientX - touchStartX)
-      const dy = Math.abs(t.clientY - touchStartY)
-      const dt = Date.now() - touchStartTime
+      const dx = Math.abs(t.clientX - t0x)
+      const dy = Math.abs(t.clientY - t0y)
+      const dt = Date.now() - t0time
 
       if (dt < 300 && dx < 20 && dy < 20) {
-        const { x, y } = toCanvasCoords(touchStartX, touchStartY)
+        const { x, y } = toCanvas(t0x, t0y)
         socket.emit('input', { type: 'tap', x, y })
-        status.textContent = `Tap: ${Math.round(x)}, ${Math.round(y)}`
 
-        // Focus hidden input for keyboard
-        setTimeout(() => hiddenInput.focus(), 100)
+        // Focus hidden input to bring up keyboard
+        hiddenInput.removeAttribute('readonly')
+        hiddenInput.focus()
       }
     }, { passive: false })
 
-    // Hidden input for keyboard
+    // Desktop
+    canvas.addEventListener('click', (e) => {
+      if (navigator.maxTouchPoints > 0) return
+      const { x, y } = toCanvas(e.clientX, e.clientY)
+      socket.emit('input', { type: 'tap', x, y })
+      hiddenInput.focus()
+    })
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      socket.emit('input', { type: 'scroll', delta: e.deltaY })
+    }, { passive: false })
+
+    // Capture keyboard from hidden input
     let lastVal = ''
     hiddenInput.addEventListener('input', () => {
       const val = hiddenInput.value
       if (val.length > lastVal.length) {
-        const newChar = val.slice(lastVal.length)
-        socket.emit('input', { type: 'type', text: newChar })
+        socket.emit('input', { type: 'type', text: val.slice(lastVal.length) })
       }
       lastVal = val
+      // Keep value short to avoid issues
+      if (hiddenInput.value.length > 20) {
+        hiddenInput.value = ''
+        lastVal = ''
+      }
     })
 
     hiddenInput.addEventListener('keydown', (e) => {
@@ -199,26 +243,20 @@
       else socket.emit('input', { type: 'key', key: e.key })
     })
 
-    // Desktop click
-    canvas.addEventListener('click', (e) => {
-      if (navigator.maxTouchPoints > 0) return
-      const { x, y } = toCanvasCoords(e.clientX, e.clientY)
-      socket.emit('input', { type: 'tap', x, y })
-    })
-
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault()
-      socket.emit('input', { type: 'scroll', delta: e.deltaY })
-    }, { passive: false })
-
-    // Go button
+    // Toolbar controls
     document.getElementById('goBtn').addEventListener('click', () => {
+      toolbar.classList.remove('show')
       if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
       else startSession(urlbar.value)
     })
 
+    document.getElementById('closeBar').addEventListener('click', () => {
+      toolbar.classList.remove('show')
+    })
+
     urlbar.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return
+      toolbar.classList.remove('show')
       if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
       else startSession(urlbar.value)
     })
