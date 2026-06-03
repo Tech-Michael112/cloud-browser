@@ -16,6 +16,9 @@ app.post('/api/session', async (req, res) => {
   try {
     const { url, userAgent, width, height } = req.body
 
+    const w = parseInt(width) || 412
+    const h = parseInt(height) || 915
+
     const browser = await chromium.launch({
       headless: true,
       args: [
@@ -29,7 +32,7 @@ app.post('/api/session', async (req, res) => {
 
     const context = await browser.newContext({
       userAgent: userAgent || 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-      viewport: { width: width || 390, height: height || 844 },
+      viewport: { width: w, height: h },
       deviceScaleFactor: 1,
       isMobile: true,
       hasTouch: true,
@@ -51,9 +54,9 @@ app.post('/api/session', async (req, res) => {
     await page.goto(url || 'https://accounts.google.com')
 
     const sessionId = Date.now().toString()
-    sessions[sessionId] = { browser, page, context }
+    sessions[sessionId] = { browser, page, context, width: w, height: h }
 
-    res.json({ sessionId })
+    res.json({ sessionId, width: w, height: h })
   } catch (err) {
     console.error('Session error:', err)
     res.status(500).json({ error: err.message })
@@ -61,8 +64,6 @@ app.post('/api/session', async (req, res) => {
 })
 
 io.on('connection', (socket) => {
-  console.log('user connected:', socket.id)
-
   socket.on('join', (sessionId) => {
     socket.sessionId = sessionId
     startStreaming(socket, sessionId)
@@ -74,17 +75,17 @@ io.on('connection', (socket) => {
     const { page } = session
 
     try {
-      if (data.type === 'click') {
-        await page.mouse.click(data.x, data.y)
-      }
       if (data.type === 'tap') {
         await page.touchscreen.tap(data.x, data.y)
+      }
+      if (data.type === 'click') {
+        await page.mouse.click(data.x, data.y)
       }
       if (data.type === 'scroll') {
         await page.mouse.wheel(0, data.delta)
       }
       if (data.type === 'type') {
-        await page.keyboard.type(data.text, { delay: 50 })
+        await page.keyboard.type(data.text, { delay: 30 })
       }
       if (data.type === 'key') {
         await page.keyboard.press(data.key)
@@ -127,7 +128,7 @@ async function startStreaming(socket, sessionId) {
     } catch (err) {
       clearInterval(streamInterval)
     }
-  }, 100)
+  }, 150)
 }
 
 const PORT = process.env.PORT || 3000
