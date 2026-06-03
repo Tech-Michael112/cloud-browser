@@ -21,7 +21,18 @@
       color: #888; font-size: 12px; padding: 4px;
       font-family: monospace; width: 100%; text-align: center;
     }
-    #screen { width: 390px; height: 844px; cursor: pointer; background: #000; }
+    #wrapper {
+      width: 100%;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+    }
+    #screen {
+      display: block;
+      cursor: pointer;
+      background: #000;
+      max-width: 100%;
+    }
   </style>
 </head>
 <body>
@@ -30,7 +41,9 @@
     <button id="goBtn">Go</button>
   </div>
   <div id="status">Starting...</div>
-  <canvas id="screen" width="390" height="844"></canvas>
+  <div id="wrapper">
+    <canvas id="screen"></canvas>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -74,10 +87,16 @@
       }
     }
 
-    // Render frames
+    // Render frames — fix blur by using natural image size
     socket.on('frame', (base64) => {
       const img = new Image()
-      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      img.onload = () => {
+        if (canvas.width !== img.naturalWidth) {
+          canvas.width = img.naturalWidth
+          canvas.height = img.naturalHeight
+        }
+        ctx.drawImage(img, 0, 0)
+      }
       img.src = 'data:image/jpeg;base64,' + base64
     })
 
@@ -92,24 +111,28 @@
       status.textContent = 'Error: ' + msg
     })
 
-    // Click
+    // Click — scale coordinates to match canvas real size
     canvas.addEventListener('click', (e) => {
       const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
       socket.emit('input', {
         type: 'click',
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
       })
     })
 
-    // Touch
+    // Touch — scale coordinates
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
       const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
       socket.emit('input', {
         type: 'touchstart',
-        x: e.touches[0].clientX - rect.left,
-        y: e.touches[0].clientY - rect.top
+        x: (e.touches[0].clientX - rect.left) * scaleX,
+        y: (e.touches[0].clientY - rect.top) * scaleY
       })
     }, { passive: false })
 
