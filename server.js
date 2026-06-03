@@ -14,7 +14,7 @@ const sessions = {}
 
 app.post('/api/session', async (req, res) => {
   try {
-    const { url } = req.body
+    const { url, userAgent, width, height } = req.body
 
     const browser = await chromium.launch({
       headless: true,
@@ -22,19 +22,32 @@ app.post('/api/session', async (req, res) => {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled'
       ]
     })
 
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-      viewport: { width: 390, height: 844 },
+      userAgent: userAgent || 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      viewport: { width: width || 390, height: height || 844 },
       deviceScaleFactor: 1,
       isMobile: true,
-      hasTouch: true
+      hasTouch: true,
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+      extraHTTPHeaders: {
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
     })
 
     const page = await context.newPage()
+
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] })
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] })
+    })
+
     await page.goto(url || 'https://accounts.google.com')
 
     const sessionId = Date.now().toString()
@@ -52,28 +65,29 @@ io.on('connection', (socket) => {
 
   socket.on('join', (sessionId) => {
     socket.sessionId = sessionId
-    console.log('joined session:', sessionId)
     startStreaming(socket, sessionId)
   })
 
   socket.on('input', async (data) => {
     const session = sessions[socket.sessionId]
     if (!session) return
-
     const { page } = session
 
     try {
       if (data.type === 'click') {
         await page.mouse.click(data.x, data.y)
       }
-      if (data.type === 'touchstart') {
+      if (data.type === 'tap') {
         await page.touchscreen.tap(data.x, data.y)
       }
       if (data.type === 'scroll') {
         await page.mouse.wheel(0, data.delta)
       }
       if (data.type === 'type') {
-        await page.keyboard.type(data.key)
+        await page.keyboard.type(data.text, { delay: 50 })
+      }
+      if (data.type === 'key') {
+        await page.keyboard.press(data.key)
       }
       if (data.type === 'navigate') {
         await page.goto(data.url)
@@ -88,7 +102,6 @@ io.on('connection', (socket) => {
     if (session) {
       await session.browser.close()
       delete sessions[socket.sessionId]
-      console.log('session cleaned up:', socket.sessionId)
     }
   })
 })
@@ -107,16 +120,11 @@ async function startStreaming(socket, sessionId) {
       clearInterval(streamInterval)
       return
     }
-
     try {
-      const screenshot = await page.screenshot({
-        type: 'jpeg',
-        quality: 95
-      })
+      const screenshot = await page.screenshot({ type: 'jpeg', quality: 90 })
       socket.emit('frame', screenshot.toString('base64'))
       socket.emit('url', page.url())
     } catch (err) {
-      console.error('Stream error:', err)
       clearInterval(streamInterval)
     }
   }, 100)
