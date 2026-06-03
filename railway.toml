@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install && node node_modules/.bin/playwright install chromium"
+buildCommand = "npm install && ./node_modules/.bin/playwright install chromium"
 
 [deploy]
 startCommand = "node server.js"
