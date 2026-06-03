@@ -1,43 +1,35 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
 <html>
 <head>
   <title>Cloud Browser</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #111; display: flex; 
-           flex-direction: column; align-items: center; }
+    body { background: #111; display: flex; flex-direction: column; align-items: center; }
     #toolbar {
       width: 100%; background: #222; padding: 8px;
       display: flex; gap: 8px;
     }
     #urlbar {
       flex: 1; padding: 6px 10px; border-radius: 20px;
-      border: none; background: #333; color: white;
+      border: none; background: #333; color: white; font-size: 14px;
     }
     #goBtn {
       padding: 6px 16px; border-radius: 20px;
-      background: #4CAF50; color: white; border: none;
-      cursor: pointer;
-    }
-    #screen {
-      width: 390px;
-      height: 844px;
-      cursor: pointer;
+      background: #4CAF50; color: white; border: none; cursor: pointer;
     }
     #status {
       color: #888; font-size: 12px; padding: 4px;
-      font-family: monospace;
+      font-family: monospace; width: 100%; text-align: center;
     }
+    #screen { width: 390px; height: 844px; cursor: pointer; background: #000; }
   </style>
 </head>
 <body>
-
   <div id="toolbar">
-    <input id="urlbar" type="text" placeholder="Enter URL..." />
+    <input id="urlbar" type="text" value="https://google.com" />
     <button id="goBtn">Go</button>
   </div>
-  <div id="status">Connecting...</div>
+  <div id="status">Starting...</div>
   <canvas id="screen" width="390" height="844"></canvas>
 
   <script src="/socket.io/socket.io.js"></script>
@@ -48,34 +40,41 @@
     const status = document.getElementById('status')
     const socket = io()
 
-    // Detect device profile
-    const profile = {
-      userAgent: navigator.userAgent,
-      width: 390,
-      height: 844,
-      dpr: window.devicePixelRatio || 3,
-      touch: navigator.maxTouchPoints > 0,
-      url: 'https://google.com'
-    }
+    let sessionId = null
 
-    // Start session
-    async function startSession() {
+    async function startSession(url) {
       status.textContent = 'Starting session...'
+      try {
+        const res = await fetch('/api/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userAgent: navigator.userAgent,
+            width: 390,
+            height: 844,
+            dpr: window.devicePixelRatio || 3,
+            touch: navigator.maxTouchPoints > 0,
+            url: url || 'https://google.com'
+          })
+        })
 
-      const res = await fetch('/api/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile)
-      })
+        const data = await res.json()
 
-      const { sessionId } = await res.json()
-      status.textContent = 'Session started: ' + sessionId
+        if (data.error) {
+          status.textContent = 'Error: ' + data.error
+          return
+        }
 
-      // Join the session via socket
-      socket.emit('join', sessionId)
+        sessionId = data.sessionId
+        status.textContent = 'Session ready!'
+        socket.emit('join', sessionId)
+
+      } catch (err) {
+        status.textContent = 'Failed: ' + err.message
+      }
     }
 
-    // Render incoming frames
+    // Render frames
     socket.on('frame', (base64) => {
       const img = new Image()
       img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
@@ -85,10 +84,15 @@
     // Update URL bar
     socket.on('url', (url) => {
       urlbar.value = url
-      status.textContent = 'Live: ' + url
+      status.textContent = url
     })
 
-    // Send click input
+    // Error
+    socket.on('error', (msg) => {
+      status.textContent = 'Error: ' + msg
+    })
+
+    // Click
     canvas.addEventListener('click', (e) => {
       const rect = canvas.getBoundingClientRect()
       socket.emit('input', {
@@ -98,7 +102,7 @@
       })
     })
 
-    // Send touch input
+    // Touch
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
       const rect = canvas.getBoundingClientRect()
@@ -107,25 +111,35 @@
         x: e.touches[0].clientX - rect.left,
         y: e.touches[0].clientY - rect.top
       })
-    })
+    }, { passive: false })
 
-    // Send scroll
+    // Scroll
     canvas.addEventListener('wheel', (e) => {
       socket.emit('input', { type: 'scroll', delta: e.deltaY })
     })
 
-    // Navigate to URL
+    // Go button
     document.getElementById('goBtn').addEventListener('click', () => {
-      socket.emit('input', { type: 'navigate', url: urlbar.value })
-    })
-
-    urlbar.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (sessionId) {
         socket.emit('input', { type: 'navigate', url: urlbar.value })
+      } else {
+        startSession(urlbar.value)
       }
     })
 
-    startSession()
+    // Enter key
+    urlbar.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (sessionId) {
+          socket.emit('input', { type: 'navigate', url: urlbar.value })
+        } else {
+          startSession(urlbar.value)
+        }
+      }
+    })
+
+    // Auto start
+    startSession('https://google.com')
   </script>
 </body>
 </html>
