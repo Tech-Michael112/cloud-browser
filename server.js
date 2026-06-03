@@ -16,8 +16,8 @@ app.post('/api/session', async (req, res) => {
   try {
     const { url, userAgent, width, height } = req.body
 
-    const w = parseInt(width) || 412
-    const h = parseInt(height) || 915
+    const w = parseInt(width) || 360
+    const h = parseInt(height) || 780
 
     const browser = await chromium.launch({
       headless: true,
@@ -31,13 +31,12 @@ app.post('/api/session', async (req, res) => {
     })
 
     const context = await browser.newContext({
-      userAgent: userAgent || 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      userAgent: userAgent,
       viewport: { width: w, height: h },
       deviceScaleFactor: 1,
       isMobile: true,
       hasTouch: true,
       locale: 'en-US',
-      timezoneId: 'America/New_York',
       extraHTTPHeaders: {
         'Accept-Language': 'en-US,en;q=0.9'
       }
@@ -78,9 +77,6 @@ io.on('connection', (socket) => {
       if (data.type === 'tap') {
         await page.touchscreen.tap(data.x, data.y)
       }
-      if (data.type === 'click') {
-        await page.mouse.click(data.x, data.y)
-      }
       if (data.type === 'scroll') {
         await page.mouse.wheel(0, data.delta)
       }
@@ -109,29 +105,18 @@ io.on('connection', (socket) => {
 
 async function startStreaming(socket, sessionId) {
   const session = sessions[sessionId]
-  if (!session) {
-    socket.emit('error', 'Session not found')
-    return
-  }
+  if (!session) { socket.emit('error', 'Session not found'); return }
 
   const { page } = session
-
   const streamInterval = setInterval(async () => {
-    if (!sessions[sessionId]) {
-      clearInterval(streamInterval)
-      return
-    }
+    if (!sessions[sessionId]) { clearInterval(streamInterval); return }
     try {
-      const screenshot = await page.screenshot({ type: 'jpeg', quality: 90 })
+      const screenshot = await page.screenshot({ type: 'jpeg', quality: 85 })
       socket.emit('frame', screenshot.toString('base64'))
       socket.emit('url', page.url())
-    } catch (err) {
-      clearInterval(streamInterval)
-    }
+    } catch (err) { clearInterval(streamInterval) }
   }, 150)
 }
 
 const PORT = process.env.PORT || 3000
-server.listen(PORT, () => {
-  console.log('Server running on port ' + PORT)
-})
+server.listen(PORT, () => console.log('Server running on port ' + PORT))

@@ -2,37 +2,107 @@
 <html>
 <head>
   <title>Cloud Browser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #111; display: flex; flex-direction: column; align-items: center; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
     #toolbar {
-      width: 100%; background: #222; padding: 8px;
-      display: flex; gap: 8px;
+      width: 100%;
+      background: #1a1a1a;
+      padding: 6px 8px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-shrink: 0;
+      height: 44px;
     }
     #urlbar {
-      flex: 1; padding: 6px 10px; border-radius: 20px;
-      border: none; background: #333; color: white; font-size: 14px;
+      flex: 1;
+      padding: 5px 10px;
+      border-radius: 20px;
+      border: none;
+      background: #333;
+      color: white;
+      font-size: 13px;
+      height: 32px;
     }
     #goBtn {
-      padding: 6px 16px; border-radius: 20px;
-      background: #4CAF50; color: white; border: none; cursor: pointer;
+      padding: 5px 14px;
+      border-radius: 20px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      height: 32px;
+      white-space: nowrap;
     }
     #status {
-      color: #888; font-size: 12px; padding: 4px;
-      font-family: monospace; width: 100%; text-align: center;
+      color: #666;
+      font-size: 10px;
+      padding: 2px 8px;
+      font-family: monospace;
+      text-align: center;
+      flex-shrink: 0;
+      background: #000;
+      height: 18px;
     }
     #wrapper {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
       width: 100%;
-      overflow: auto;
-      display: flex;
-      justify-content: center;
     }
     #screen {
-      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      touch-action: none;
       cursor: pointer;
-      background: #000;
-      max-width: 100%;
     }
+    #keyboard {
+      position: fixed;
+      bottom: -80px;
+      left: 0;
+      width: 100%;
+      background: #1a1a1a;
+      padding: 8px;
+      display: flex;
+      gap: 6px;
+      z-index: 999;
+      transition: bottom 0.25s ease;
+      flex-shrink: 0;
+    }
+    #keyboard.show { bottom: 0; }
+    #keyinput {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      background: #333;
+      color: white;
+      font-size: 16px;
+    }
+    .kbtn {
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #keysend { background: #4CAF50; }
+    #keyclose { background: #e53935; }
   </style>
 </head>
 <body>
@@ -44,6 +114,11 @@
   <div id="wrapper">
     <canvas id="screen"></canvas>
   </div>
+  <div id="keyboard">
+    <input id="keyinput" type="text" placeholder="Type here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <button class="kbtn" id="keysend">Send</button>
+    <button class="kbtn" id="keyclose">✕</button>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -51,42 +126,47 @@
     const ctx = canvas.getContext('2d')
     const urlbar = document.getElementById('urlbar')
     const status = document.getElementById('status')
+    const keyboard = document.getElementById('keyboard')
+    const keyinput = document.getElementById('keyinput')
+    const wrapper = document.getElementById('wrapper')
     const socket = io()
 
     let sessionId = null
 
+    // Get real device dimensions
+    const deviceWidth = window.screen.width
+    const deviceHeight = window.screen.height
+    const deviceUA = navigator.userAgent
+
     async function startSession(url) {
-      status.textContent = 'Starting session...'
+      status.textContent = 'Starting...'
       try {
         const res = await fetch('/api/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: url || 'https://accounts.google.com'
+            url: url || 'https://accounts.google.com',
+            userAgent: deviceUA,
+            width: deviceWidth,
+            height: deviceHeight
           })
         })
-
         const data = await res.json()
-
-        if (data.error) {
-          status.textContent = 'Error: ' + data.error
-          return
-        }
-
+        if (data.error) { status.textContent = 'Error: ' + data.error; return }
         sessionId = data.sessionId
-        status.textContent = 'Session ready!'
+        status.textContent = 'Live'
         socket.emit('join', sessionId)
-
       } catch (err) {
         status.textContent = 'Failed: ' + err.message
       }
     }
 
-    // Render frames
+    // Draw frame filling the wrapper div
     socket.on('frame', (base64) => {
       const img = new Image()
       img.onload = () => {
-        if (canvas.width !== img.naturalWidth) {
+        // Set canvas internal resolution to image size
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
           canvas.width = img.naturalWidth
           canvas.height = img.naturalHeight
         }
@@ -95,68 +175,103 @@
       img.src = 'data:image/jpeg;base64,' + base64
     })
 
-    // Update URL bar
-    socket.on('url', (url) => {
-      urlbar.value = url
-      status.textContent = url
-    })
+    socket.on('url', (url) => { urlbar.value = url })
+    socket.on('error', (msg) => { status.textContent = 'Error: ' + msg })
 
-    // Error
-    socket.on('error', (msg) => {
-      status.textContent = 'Error: ' + msg
-    })
-
-    // Click
-    canvas.addEventListener('click', (e) => {
+    // Convert screen coords to canvas coords
+    function scale(clientX, clientY) {
       const rect = canvas.getBoundingClientRect()
-      const scaleX = canvas.width / rect.width
-      const scaleY = canvas.height / rect.height
-      socket.emit('input', {
-        type: 'click',
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY
-      })
-    })
+      return {
+        x: (clientX - rect.left) * (canvas.width / rect.width),
+        y: (clientY - rect.top) * (canvas.height / rect.height)
+      }
+    }
 
-    // Touch
+    // Touch handling
+    let t0x, t0y, t0time, lastTY
+
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
-      const rect = canvas.getBoundingClientRect()
-      const scaleX = canvas.width / rect.width
-      const scaleY = canvas.height / rect.height
-      socket.emit('input', {
-        type: 'touchstart',
-        x: (e.touches[0].clientX - rect.left) * scaleX,
-        y: (e.touches[0].clientY - rect.top) * scaleY
-      })
+      t0x = e.touches[0].clientX
+      t0y = e.touches[0].clientY
+      lastTY = t0y
+      t0time = Date.now()
     }, { passive: false })
 
-    // Scroll
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault()
+      const dy = lastTY - e.touches[0].clientY
+      lastTY = e.touches[0].clientY
+      socket.emit('input', { type: 'scroll', delta: dy * 3 })
+    }, { passive: false })
+
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault()
+      const dx = Math.abs(e.changedTouches[0].clientX - t0x)
+      const dy = Math.abs(e.changedTouches[0].clientY - t0y)
+      const dt = Date.now() - t0time
+
+      if (dt < 250 && dx < 15 && dy < 15) {
+        const { x, y } = scale(t0x, t0y)
+        socket.emit('input', { type: 'tap', x, y })
+        setTimeout(() => {
+          keyboard.classList.add('show')
+          keyinput.focus()
+        }, 350)
+      }
+    }, { passive: false })
+
+    // Desktop
+    canvas.addEventListener('click', (e) => {
+      if (navigator.maxTouchPoints > 0) return
+      const { x, y } = scale(e.clientX, e.clientY)
+      socket.emit('input', { type: 'tap', x, y })
+    })
+
     canvas.addEventListener('wheel', (e) => {
       socket.emit('input', { type: 'scroll', delta: e.deltaY })
     })
 
+    document.addEventListener('keydown', (e) => {
+      if (e.target === keyinput || e.target === urlbar) return
+      if (e.key.length === 1) socket.emit('input', { type: 'type', text: e.key })
+      else socket.emit('input', { type: 'key', key: e.key })
+    })
+
+    // Keyboard overlay
+    document.getElementById('keysend').addEventListener('click', () => {
+      if (keyinput.value) {
+        socket.emit('input', { type: 'type', text: keyinput.value })
+        keyinput.value = ''
+      }
+      keyboard.classList.remove('show')
+    })
+
+    document.getElementById('keyclose').addEventListener('click', () => {
+      keyboard.classList.remove('show')
+    })
+
+    keyinput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (keyinput.value) socket.emit('input', { type: 'type', text: keyinput.value })
+        socket.emit('input', { type: 'key', key: 'Enter' })
+        keyinput.value = ''
+        keyboard.classList.remove('show')
+      }
+    })
+
     // Go button
     document.getElementById('goBtn').addEventListener('click', () => {
-      if (sessionId) {
-        socket.emit('input', { type: 'navigate', url: urlbar.value })
-      } else {
-        startSession(urlbar.value)
-      }
+      if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
+      else startSession(urlbar.value)
     })
 
-    // Enter key
     urlbar.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        if (sessionId) {
-          socket.emit('input', { type: 'navigate', url: urlbar.value })
-        } else {
-          startSession(urlbar.value)
-        }
-      }
+      if (e.key !== 'Enter') return
+      if (sessionId) socket.emit('input', { type: 'navigate', url: urlbar.value })
+      else startSession(urlbar.value)
     })
 
-    // Auto start on load
     startSession('https://accounts.google.com')
   </script>
 </body>
