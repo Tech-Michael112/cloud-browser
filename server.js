@@ -16,7 +16,6 @@ app.post('/api/session', async (req, res) => {
   try {
     const { url } = req.body
 
-    // Random device fingerprint every session
     const fp = {
       width: [360, 375, 390, 412][Math.floor(Math.random() * 4)],
       height: [780, 812, 844, 915][Math.floor(Math.random() * 4)],
@@ -63,13 +62,10 @@ app.post('/api/session', async (req, res) => {
       }
     })
 
-    // Fresh session — no cookies, no cache
     await context.clearCookies()
 
     const page = await context.newPage()
- //   await page.setCacheEnabled(false)
 
-    // Apply fingerprint
     await page.addInitScript((fp) => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
       Object.defineProperty(navigator, 'platform', { get: () => fp.platform })
@@ -88,11 +84,7 @@ app.post('/api/session', async (req, res) => {
           return arr
         }
       })
-      window.chrome = {
-        runtime: {},
-        app: { isInstalled: false }
-      }
-      // Override permissions
+      window.chrome = { runtime: {}, app: { isInstalled: false } }
       const origQuery = navigator.permissions.query.bind(navigator.permissions)
       navigator.permissions.query = (p) =>
         p.name === 'notifications'
@@ -127,7 +119,10 @@ wss.on('connection', (ws) => {
     if (msg.type === 'join') {
       sessionId = msg.sessionId
       const session = sessions[sessionId]
-      if (!session) { ws.send(JSON.stringify({ type: 'error', msg: 'Session not found' })); return }
+      if (!session) {
+        ws.send(JSON.stringify({ type: 'error', msg: 'Session not found' }))
+        return
+      }
       startStream(ws, sessionId)
       return
     }
@@ -158,7 +153,6 @@ wss.on('connection', (ws) => {
 async function startStream(ws, sessionId) {
   const session = sessions[sessionId]
   if (!session) return
-
   const { page } = session
 
   while (session.active && sessions[sessionId]) {
