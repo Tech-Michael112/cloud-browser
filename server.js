@@ -67,7 +67,7 @@ app.post('/api/session', async (req, res) => {
     await context.clearCookies()
 
     const page = await context.newPage()
-    await page.setCacheEnabled(false)
+ //   await page.setCacheEnabled(false)
 
     // Apply fingerprint
     await page.addInitScript((fp) => {
